@@ -1136,6 +1136,8 @@ async function toggleFollow(uid) {
   try {
     const data = await api('POST','/api/follow?id='+uid);
     me.following = data.following;
+    // Обновляем allUsers чтобы кнопки отображались правильно
+    allUsers = await api('GET','/api/users');
     renderFriends(); renderProfile(); renderFeed();
     toast(me.following.includes(uid)?'👥 Подписался!':'Отписался');
   } catch(ex) { toast('⚠️ '+ex.message); }
@@ -1155,7 +1157,9 @@ async function renderConvList() {
   try {
     allConvos = await api('GET','/api/messages');
     renderConvItems(allConvos);
-  } catch {}
+  } catch(ex) {
+    console.warn('renderConvList error:', ex.message);
+  }
 }
 
 function renderConvItems(convos) {
@@ -1200,9 +1204,11 @@ function showConvList() {
 }
 
 async function openChat(uid) {
+  if (openChat._loading) return; // защита от двойного клика
+  openChat._loading = true;
   currentChat = uid;
   const other = getUser(uid);
-  if (!other) return;
+  if (!other) { openChat._loading = false; return; }
   const ini = initials(other.name);
 
   // На мобильном — прячем список, показываем чат
@@ -1242,6 +1248,7 @@ async function openChat(uid) {
     </div>`;
 
   await loadMessages(uid);
+  openChat._loading = false;
 
   // Polling typing & messages
   if (window._chatPoll) clearInterval(window._chatPoll);
@@ -1252,7 +1259,10 @@ async function loadMessages(uid) {
   try {
     const msgs = await api('GET','/api/messages?userId='+uid);
     renderMessages(msgs);
-  } catch {}
+  } catch(ex) {
+    const c = document.getElementById('chat-msgs');
+    if (c) c.innerHTML = '<div style="text-align:center;color:var(--danger);padding:2rem;font-size:.88rem">Ошибка загрузки: ' + ex.message + '</div>';
+  }
 }
 
 // Строим HTML одного пузыря. idx нужен как fallback для старых сообщений без id.
