@@ -756,7 +756,7 @@ html,body{height:100%;}
 </div>
 
 <script>
-const API = ''; // Render — сервер и фронтенд на одном домене
+const API = ''; // Тот же домен что и фронтенд
 // Supabase Storage — загружаем файлы напрямую из браузера
 const SUPABASE_URL = 'https://nldqqqggetegdlgfecma.supabase.co';
 
@@ -908,6 +908,7 @@ async function renderFeed() {
   c.innerHTML = '<div class="loading"><span class="spinner"></span>Загружаем ленту...</div>';
   try {
     const posts = await api('GET','/api/posts');
+    posts.forEach(p => { if (p.created_at) p.timeFormatted = formatTimeLocal(p.created_at); });
     c.innerHTML = posts.length ? posts.map(p=>postHTML(p)).join('') : '<p style="color:var(--text3);text-align:center;padding:2rem">Подпишись на кого-нибудь</p>';
     attachPostEvents();
   } catch { c.innerHTML = '<p style="color:var(--danger);text-align:center;padding:1rem">Ошибка загрузки</p>'; }
@@ -1161,10 +1162,10 @@ function renderConvItems(convos) {
   const others = allUsers.filter(u=>u.id!==me.id);
   const list = document.getElementById('conv-list-items');
   list.innerHTML = others.map(u => {
-    const convo = convos.find(c=>c.userId===u.id);
+    const convo = convos.find(c=>c.otherId===u.id);
     const ini = initials(u.name);
     const last = convo ? convo.lastMessage : 'Начать чат';
-    const time = convo?.lastTime ? new Date(convo.lastTime).toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'}) : '';
+    const time = convo?.lastTime || '';
     return `<div class="conv-item ${currentChat===u.id?'active':''}" onclick="openChat(${u.id})">
       <div class="conv-avatar-wrap">
         <div class="avatar" style="width:42px;height:42px;font-size:.9rem">${ini}</div>
@@ -1184,7 +1185,7 @@ function filterConvs() {
   const list = document.getElementById('conv-list-items');
   list.innerHTML = filtered.map(u => {
     const ini = initials(u.name);
-    const convo = allConvos.find(c=>c.userId===u.id);
+    const convo = allConvos.find(c=>c.otherId===u.id);
     const last = convo ? convo.lastMessage : 'Начать чат';
     return `<div class="conv-item ${currentChat===u.id?'active':''}" onclick="openChat(${u.id})">
       <div class="conv-avatar-wrap"><div class="avatar" style="width:42px;height:42px;font-size:.9rem">${ini}</div></div>
@@ -1610,21 +1611,7 @@ function formatTimeLocal(isoStr) {
   if (diff < 604800) return `${Math.floor(diff/86400)}д назад`;
   return d.toLocaleDateString('ru', {day:'numeric', month:'long'});
 }
-// Патчим postHTML чтобы пересчитывать время на клиенте
-const _origPostHTML = postHTML;
-// Переопределяем renderFeed чтобы использовать локальное время
-const _origRenderFeed = renderFeed;
-async function renderFeed() {
-  const c = document.getElementById('posts-container');
-  c.innerHTML = '<div class="loading"><span class="spinner"></span>Загружаем ленту...</div>';
-  try {
-    const posts = await api('GET','/api/posts');
-    // Пересчитываем время локально
-    posts.forEach(p => { p.timeFormatted = formatTimeLocal(p.created_at); });
-    c.innerHTML = posts.length ? posts.map(p=>postHTML(p)).join('') : '<p style="color:var(--text3);text-align:center;padding:2rem">Подпишись на кого-нибудь</p>';
-    attachPostEvents();
-  } catch { c.innerHTML = '<p style="color:var(--danger);text-align:center;padding:1rem">Ошибка загрузки</p>'; }
-}
+// renderFeed определена выше с поддержкой локального времени
 
 // ══ ИГРЫ ══
 let _gameRunning = false;
