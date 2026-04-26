@@ -9,7 +9,10 @@ import { dirname, join } from 'path';
 const { Pool } = pg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  max: 3,              // максимум 3 соединения (по умолчанию 10)
+  idleTimeoutMillis: 10000,  // закрывать простаивающие через 10 сек
+  connectionTimeoutMillis: 5000,
 });
 
 // Supabase-совместимый интерфейс для PostgreSQL
@@ -34,7 +37,7 @@ class SupabaseQuery {
   eq(col, val) { this._conditions.push({ col, val }); return this; }
   in(col, vals) { this._inConditions.push({ col, vals }); return this; }
   or(str) { this._orConditions.push(str); return this; }
-  gte(col, val) { this._conditions.push({ col, val, op: '>=' }); return this; }
+  gte(col, val) { this._conditions.push({ col, val, op: '>= ' }); return this; }
   order(col, opts) { this._order = { col, desc: opts?.ascending === false }; return this; }
   limit(n) { this._limit = n; return this; }
   single() { this._single = true; return this; }
@@ -51,26 +54,26 @@ class SupabaseQuery {
         let where = [];
         for (const c of this._conditions) {
           params.push(c.val);
-          where.push(`"${c.col}" ${c.op||'='} $${params.length}`);
+          where.push('"' + c.col + '" ' + (c.op||'=') + ' $' + params.length);
         }
         for (const c of this._inConditions) {
           params.push(c.vals);
-          where.push(`"${c.col}" = ANY($${params.length})`);
+          where.push('"' + c.col + '" = ANY($' + params.length + ')');
         }
         for (const orStr of this._orConditions) {
           const parts = orStr.split(',').map(p => {
             const m = p.match(/(\w+)\.(eq|gte)\.(.+)/);
             if (!m) return null;
             params.push(m[3]);
-            return `"${m[1]}" ${m[2]==='eq'?'=':'>='} $${params.length}`;
+            return '"' + m[1] + '" ' + (m[2]==='eq'?'=':'>= ') + ' $' + params.length;
           }).filter(Boolean);
           if (parts.length) where.push('(' + parts.join(' OR ') + ')');
         }
         const cols = this._select === '*' ? '*' : this._select.split(',').map(c=>'"'+c.trim()+'"').join(',');
-        let q = `SELECT ${cols} FROM "${this.table}"`;
+        let q = 'SELECT ' + cols + ' FROM "' + this.table + '"';
         if (where.length) q += ' WHERE ' + where.join(' AND ');
-        if (this._order) q += ` ORDER BY "${this._order.col}" ${this._order.desc?'DESC':'ASC'}`;
-        if (this._limit) q += ` LIMIT ${this._limit}`;
+        if (this._order) q += ' ORDER BY "' + this._order.col + '" ' + (this._order.desc?'DESC':'ASC');
+        if (this._limit) q += ' LIMIT ' + this._limit;
         const res = await client.query(q, params);
         const data = this._single ? (res.rows[0] || null) : res.rows;
         return { data, error: null };
@@ -81,7 +84,7 @@ class SupabaseQuery {
         for (const row of body) {
           const keys = Object.keys(row);
           const vals = Object.values(row);
-          const q = `INSERT INTO "${this.table}" (${keys.map(k=>'"'+k+'"').join(',')}) VALUES (${vals.map((_,i)=>'$'+(i+1)).join(',')}) RETURNING *`;
+          const q = 'INSERT INTO "' + this.table + '" (' + keys.map(k=>'"'+k+'"').join(',') + ') VALUES (' + vals.map((_,i)=>'$'+(i+1)).join(',') + ') RETURNING *';
           const res = await client.query(q, vals);
           results.push(res.rows[0]);
         }
@@ -94,7 +97,7 @@ class SupabaseQuery {
         let params = [...vals];
         const sets = keys.map((k,i) => '"'+k+'"=$'+(i+1)).join(',');
         let where = this._conditions.map(c => { params.push(c.val); return '"' + c.col + '"=$' + params.length; });
-        let q = `UPDATE "${this.table}" SET ${sets}`;
+        let q = 'UPDATE "' + this.table + '" SET ' + sets;
         if (where.length) q += ' WHERE ' + where.join(' AND ');
         q += ' RETURNING *';
         const res = await client.query(q, params);
@@ -107,7 +110,7 @@ class SupabaseQuery {
         const vals = Object.values(body);
         const conflict = this._upsertOpts?.onConflict || 'id';
         const sets = keys.filter(k=>k!==conflict).map(k=>'"'+k+'"=EXCLUDED."'+k+'"').join(',');
-        const q = `INSERT INTO "${this.table}" (${keys.map(k=>'"'+k+'"').join(',')}) VALUES (${vals.map((_,i)=>'$'+(i+1)).join(',')}) ON CONFLICT ("${conflict}") DO UPDATE SET ${sets} RETURNING *`;
+        const q = 'INSERT INTO "' + this.table + '" (' + keys.map(k=>'"'+k+'"').join(',') + ') VALUES (' + vals.map((_,i)=>'$'+(i+1)).join(',') + ') ON CONFLICT ("' + conflict + '") DO UPDATE SET ' + sets + ' RETURNING *';
         const res = await client.query(q, vals);
         return { data: res.rows[0], error: null };
       }
@@ -124,8 +127,9 @@ class SupabaseQuery {
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.static('.'));
+// Уменьшаем лимит — 50mb это очень много для свободного тарифа
+app.use(express.json({ limit: '5mb' }));
+app.use(express.static('.', { maxAge: '1d' })); // кешировать статику
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const JWT_SECRET = process.env.JWT_SECRET || 'volna_secret_2025';
@@ -496,3 +500,12 @@ app.get('*', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🌊 Волна запущена на порту ${PORT}`));
+
+// Периодическая очистка памяти каждые 30 минут
+setInterval(() => {
+  if (global.gc) global.gc();
+}, 30 * 60 * 1000);
+
+// Graceful shutdown — корректно закрываем пул при остановке
+process.on('SIGTERM', async () => { await pool.end(); process.exit(0); });
+process.on('SIGINT',  async () => { await pool.end(); process.exit(0); });
