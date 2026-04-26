@@ -66,10 +66,11 @@ class SupabaseQuery {
           }).filter(Boolean);
           if (parts.length) where.push('(' + parts.join(' OR ') + ')');
         }
-        let q = \`SELECT \${this._select === '*' ? '*' : this._select.split(',').map(c=>c.trim()).map(c=>\`"\${c}"\`).join(',')} FROM "\${this.table}"\`;
+        const cols = this._select === '*' ? '*' : this._select.split(',').map(c=>'"'+c.trim()+'"').join(',');
+        let q = `SELECT ${cols} FROM "${this.table}"`;
         if (where.length) q += ' WHERE ' + where.join(' AND ');
-        if (this._order) q += \` ORDER BY "\${this._order.col}" \${this._order.desc?'DESC':'ASC'}\`;
-        if (this._limit) q += \` LIMIT \${this._limit}\`;
+        if (this._order) q += ` ORDER BY "${this._order.col}" ${this._order.desc?'DESC':'ASC'}`;
+        if (this._limit) q += ` LIMIT ${this._limit}`;
         const res = await client.query(q, params);
         const data = this._single ? (res.rows[0] || null) : res.rows;
         return { data, error: null };
@@ -80,7 +81,7 @@ class SupabaseQuery {
         for (const row of body) {
           const keys = Object.keys(row);
           const vals = Object.values(row);
-          const q = \`INSERT INTO "\${this.table}" (\${keys.map(k=>\`"\${k}"\`).join(',')}) VALUES (\${vals.map((_,i)=>'$'+(i+1)).join(',')}) RETURNING *\`;
+          const q = `INSERT INTO "${this.table}" (${keys.map(k=>'"'+k+'"').join(',')}) VALUES (${vals.map((_,i)=>'$'+(i+1)).join(',')}) RETURNING *`;
           const res = await client.query(q, vals);
           results.push(res.rows[0]);
         }
@@ -91,9 +92,9 @@ class SupabaseQuery {
         const keys = Object.keys(this._body);
         const vals = Object.values(this._body);
         let params = [...vals];
-        const sets = keys.map((k,i) => \`"\${k}"=$\${i+1}\`).join(',');
-        let where = this._conditions.map(c => { params.push(c.val); return \`"\${c.col}"=$\${params.length}\`; });
-        let q = \`UPDATE "\${this.table}" SET \${sets}\`;
+        const sets = keys.map((k,i) => '"'+k+'"=$'+(i+1)).join(',');
+        let where = this._conditions.map(c => { params.push(c.val); return '"' + c.col + '"=$' + params.length; });
+        let q = `UPDATE "${this.table}" SET ${sets}`;
         if (where.length) q += ' WHERE ' + where.join(' AND ');
         q += ' RETURNING *';
         const res = await client.query(q, params);
@@ -105,8 +106,8 @@ class SupabaseQuery {
         const keys = Object.keys(body);
         const vals = Object.values(body);
         const conflict = this._upsertOpts?.onConflict || 'id';
-        const sets = keys.filter(k=>k!==conflict).map((k,i)=>\`"\${k}"=EXCLUDED."\${k}"\`).join(',');
-        const q = \`INSERT INTO "\${this.table}" (\${keys.map(k=>\`"\${k}"\`).join(',')}) VALUES (\${vals.map((_,i)=>'$'+(i+1)).join(',')}) ON CONFLICT ("\${conflict}") DO UPDATE SET \${sets} RETURNING *\`;
+        const sets = keys.filter(k=>k!==conflict).map(k=>'"'+k+'"=EXCLUDED."'+k+'"').join(',');
+        const q = `INSERT INTO "${this.table}" (${keys.map(k=>'"'+k+'"').join(',')}) VALUES (${vals.map((_,i)=>'$'+(i+1)).join(',')}) ON CONFLICT ("${conflict}") DO UPDATE SET ${sets} RETURNING *`;
         const res = await client.query(q, vals);
         return { data: res.rows[0], error: null };
       }
