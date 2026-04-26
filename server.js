@@ -489,14 +489,6 @@ app.post('/api/heartbeat', async (req, res) => {
 });
 
 // SPA fallback — все не-API маршруты отдают index.html
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-const __dirname = dirname(fileURLToPath(import.meta.url));
-app.get('*', (req, res) => {
-  res.sendFile(join(__dirname, 'index.html'));
-});
-
-// SPA fallback
 app.get('*', (req, res) => {
   res.sendFile(join(__dirname, 'index.html'));
 });
